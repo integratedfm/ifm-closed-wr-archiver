@@ -75,11 +75,11 @@ public class ResourcesAnalysis {
             }
             ResultSet rs = null;
             stmt = con.createStatement();
-            String sql=get_all_table_fields + table_name+"'";
+            String sql = get_all_table_fields + table_name + "'";
             rs = stmt.executeQuery(sql);
 
             while (rs.next()) {
-                String fn=rs.getString("field_name").trim()+",";
+                String fn = rs.getString("field_name").trim() + ",";
                 fields.append(fn);
             }
             fields.deleteCharAt(fields.length() - 1);//remove last comma
@@ -100,14 +100,15 @@ public class ResourcesAnalysis {
 
         return fields.toString();
     }
-    
-    public static boolean execDbSql_test(String sql){
+
+    public static boolean execDbSql_test(String sql) {
         System.out.println(sql);
         return true;
     }
+
     public static boolean execDbSql(String sql) {
         Statement stmt = null;
-        ResultSet rs;
+
         boolean success = false;
 
         try {
@@ -115,14 +116,14 @@ public class ResourcesAnalysis {
             if (con == null) {
                 return success;
             }
-            rs = null;
+
             stmt = con.createStatement();
-            rs = stmt.executeQuery(sql);
+            stmt.execute(sql);
             success = true;
 
         } catch (SQLException ex) {
 
-            logger.error(ex.getMessage() + " Error: from inside execDbSql Method");
+            logger.error(ex.getMessage() + " Error: from inside execDbSql Method \n sql=" + sql);
             AddError(ex.getMessage() + " Error: from inside execDbSql Method");
 
         } finally {
@@ -166,7 +167,7 @@ public class ResourcesAnalysis {
             ResultSet rs = null;
             stmt = con.createStatement();
             StringBuffer sb = new StringBuffer("SELECT ").append(fld);
-            sb.append(" FROM " + table_name + " WHERE " + cond);
+            sb.append(" FROM afm." + table_name + " WHERE " + cond);
 
             rs = stmt.executeQuery(sb.toString());
             while (rs.next()) {
@@ -190,17 +191,30 @@ public class ResourcesAnalysis {
         return ls;
     }
 
-    public void archiveWorkRequestDocument(final String tableName, final int id) {
+    public void archiveDocument(final int id, String tableName) {
 
-        String sql;
+        String fields = getAllFieldNames("afm_docs");//get comma separated
+        String vals = fields.replace("table_name", "'h" + tableName + "'");
 
-        if ("wo".equals(tableName)) {
-            sql
-                    = "UPDATE afm.afm_docs SET table_name='hwr' where table_name='wr' and pkey_value IN (select wr.wr_id from wr where wr.wo_id = " + id + ")";
-        } else {
-            sql = "UPDATE afm.afm_docs SET table_name='hwr' where table_name='wr' and pkey_value =" + id;
-        }
-        execDbSql(sql);
+        String insert
+                = "INSERT into afm.afm_docs (" + fields + ") SELECT "
+                + vals + " FROM afm.afm_docs WHERE " + "table_name='" + tableName + "' AND pkey_value='" + id + "'";
+
+        execDbSql(insert);
+
+        fields = getAllFieldNames("afm_docvers");//get comma separated
+        vals = fields.replace("table_name", "'h" + tableName + "'");
+
+        insert
+                = "INSERT into afm.afm_docvers (" + fields + ") SELECT "
+                + vals + " FROM afm.afm_docvers WHERE " + "table_name='" + tableName + "' AND pkey_value='" + id + "'";
+
+        execDbSql(insert);
+
+        String delete = "DELETE FROM afm.afm_docvers WHERE table_name='" + tableName + "' AND pkey_value='" + id + "'";
+        execDbSql(delete);
+        delete = "DELETE FROM afm.afm_docs WHERE table_name='" + tableName + "' AND pkey_value='" + id + "'";
+        execDbSql(delete);
 
     }
 
@@ -210,6 +224,8 @@ public class ResourcesAnalysis {
      */
     public void archiveHelper(String cond) {
         String fields = getAllFieldNames("activity_log");
+
+        fields = fields.replace(",questionnaire_id,", ",");
         String insert = "INSERT into afm.hactivity_log (" + fields + ") "
                 + "SELECT " + fields + " FROM afm.activity_log WHERE " + cond;
         execDbSql(insert);
@@ -295,11 +311,19 @@ public class ResourcesAnalysis {
                         + wo_id + ")";
 
                 execDbSql(update);
+                execDbCommit();
+            } else if (wr_id > 0) {
+                where = "wr_id = " + wr_id;
+                final String update
+                        = "UPDATE afm.helpdesk_step_log  SET table_name='hwr' "
+                        + " WHERE table_name='wr' AND pkey_value = " + wr_id;
+                execDbSql(update);
+                execDbCommit();
             }
 
-        } else if (wr_id != 0) {
+        } else if (wr_id > 0) {//table_name is not wo and not wr
             where = "wr_id = " + wr_id;
-        } else if (wo_id != 0) {
+        } else if (wo_id > 0) {
             where = "wr_id IN (SELECT wr_id FROM wr WHERE wo_id = " + wo_id + ")";
         }
         // format insert query
@@ -307,6 +331,7 @@ public class ResourcesAnalysis {
                 = "INSERT into afm.h" + table_name + " (" + fields + ") SELECT "
                 + fields + " FROM afm." + table_name + " WHERE " + where;
         execDbSql(insert);
+        execDbCommit();
 
     }
 
@@ -318,7 +343,6 @@ public class ResourcesAnalysis {
                 allClosed = false;
                 break;
             }
-
         }
         return allClosed;
     }
@@ -339,16 +363,6 @@ public class ResourcesAnalysis {
         archiveTable("wrcf", 0, wr_id);
         // wr_other
         archiveTable("wr_other", 0, wr_id);
-
-        //archiveTable("activity_log", 0, wr_id);
-        String sql = "SELECT activity_log_id FROM afm.activity_log where wr_id="+wr_id;
-        
-///(String table_name, String fld, String cond)
-        List<String> activity_logs = selectDbRecords("afm.activity_log", "activity_log_id", " wr_id="+wr_id);
-        for(String acid:activity_logs){
-            archiveHelper(" activity_log_id=" + acid);
-        }
-                
 
         final String deleteWr_other = "DELETE FROM wr_other WHERE wr_id  = " + wr_id;
         final String deleteWrcf = "DELETE FROM wrcf WHERE wr_id = " + wr_id;
@@ -371,48 +385,85 @@ public class ResourcesAnalysis {
         executeDbSqlCommands(commands);
 
         //archive associated activity_log records
+        //archiveTable("activity_log", 0, wr_id);
+        String sql = "SELECT activity_log_id FROM afm.activity_log where wr_id=" + wr_id;
+
+///(String table_name, String fld, String cond)
+        List<String> activity_logs = selectDbRecords("activity_log", "activity_log_id", " wr_id=" + wr_id);
+        for (String acid : activity_logs) {
+            archiveHelper(" activity_log_id=" + acid);
+            execDbCommit();
+        }
+
 //      archiveWorkRequestDocument("wr", wr_id);
-        archiveWorkRequestDocument("wr", wr_id);
-        
+        archiveDocument(wr_id, "wr");
+        execDbCommit();
+
         // update records in helpdesk_step_log
-        final String update =
-                "UPDATE afm.helpdesk_step_log  SET table_name='hwr' "
-                        + " WHERE table_name='wr' AND pkey_value = " + wr_id;
-        
+        final String update
+                = "UPDATE afm.helpdesk_step_log  SET table_name='hwr' "
+                + " WHERE table_name='wr' AND pkey_value = " + wr_id;
+
         execDbSql(update);
+        execDbCommit();
         // update records in hhelpdesk_step_log
         archiveStepLog();
-        
+
     }
+
     /**
      * Archive helpdesk_step_log data to hhelpdesk_step_log
-     *   
-     * KB3034237 - Create an archive table for helpdesk_step_log      
+     *
+     * KB3034237 - Create an archive table for helpdesk_step_log
      */
     protected void archiveStepLog() {
-        
-        String flds= getAllFieldNames("helpdesk_step_log");
-        final String insert =
-                    "INSERT into afm.hhelpdesk_step_log (" + flds + ") SELECT "
-                            + flds + " FROM afm.helpdesk_step_log WHERE table_name IN('hwr','hactivity_log')";
-            
+
+        String flds = getAllFieldNames("helpdesk_step_log");
+        final String insert
+                = "INSERT into afm.hhelpdesk_step_log (" + flds + ") SELECT "
+                + flds + " FROM afm.helpdesk_step_log WHERE table_name IN('hwr','hactivity_log')";
+
         execDbSql(insert);
+        execDbCommit();
+        final String delete = "DELETE FROM afm.helpdesk_step_log WHERE table_name IN('hwr','hactivity_log')";
+        execDbSql(delete);
+        execDbCommit();
+
     }
 
     public void analyseWrWo() {
         initWOMapWRList();
         Set<Integer> woSet = woMap.keySet();
+        String deleteHHLog = 
+                "DELETE FROM  afm.hhelpdesk_step_log WHERE step_log_id IN "
+                + "( SELECT step_log_id FROM afm.helpdesk_step_log "
+                + "WHERE table_name IN('hwr','hactivity_log') )";
+        execDbSql(deleteHHLog);
+        execDbCommit();
+
         for (Integer wo : woSet) {
             boolean allClosed = allWrClosed(wo);
+            List<String> woList = selectDbRecords("hwo", "wo_id", "wo_id=" + wo);
             if (allClosed) {
                 //archive all wr, wr_other, ..., wo in the same order as AB
                 List<WrRec> wl = woMap.get(wo);
-                archiveTable("wo", wo, 0);
+
+                String deleteWo;
+                
+                ///This will always have single element. Just to make sure
+                for (String woId : woList) {
+                    deleteWo = "DELETE FROM hwo WHERE wo_id = " + woId;
+                    execDbSql(deleteWo);
+                    execDbCommit();
+                }
+
                 for (WrRec w : wl) {
                     archiveWorkRequest(w.wr_id);
                 }
-                System.out.println("Finished archiving of wo "+wo);
-                execDbCommit();
+
+                archiveTable("wo", wo, 0);
+                System.out.println("Finished archiving of wo " + wo);
+
             }
         }
     }
